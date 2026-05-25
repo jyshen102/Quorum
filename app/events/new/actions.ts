@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { isAdminEmail } from '@/lib/admin'
 import { generateSlug } from '@/lib/utils/slug'
 import { redirect } from 'next/navigation'
 import type { Event } from '@/lib/types/database'
@@ -22,7 +23,7 @@ export interface EventFormData {
 export async function createEvent(data: EventFormData) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not authenticated')
+  if (!user || !isAdminEmail(user.email)) throw new Error('Not authorized')
 
   if (!data.type) throw new Error('Pick a type')
 

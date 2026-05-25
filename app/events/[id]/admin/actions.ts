@@ -1,13 +1,14 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { isAdminEmail } from '@/lib/admin'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
 export async function closePoll(eventId: string, finalDate: string) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not authenticated')
+  if (!user || !isAdminEmail(user.email)) throw new Error('Not authorized')
 
   const { error } = await supabase
     .from('events')
@@ -23,7 +24,7 @@ export async function closePoll(eventId: string, finalDate: string) {
 export async function reopenPoll(eventId: string) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not authenticated')
+  if (!user || !isAdminEmail(user.email)) throw new Error('Not authorized')
 
   const { error } = await supabase
     .from('events')
@@ -47,7 +48,7 @@ export interface EventEditData {
 export async function updateEvent(eventId: string, data: EventEditData) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not authenticated')
+  if (!user || !isAdminEmail(user.email)) throw new Error('Not authorized')
 
   if (!data.title.trim()) throw new Error('Title is required')
 
@@ -72,7 +73,7 @@ export async function updateEvent(eventId: string, data: EventEditData) {
 export async function deleteEvent(eventId: string) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not authenticated')
+  if (!user || !isAdminEmail(user.email)) throw new Error('Not authorized')
 
   // Cascade deletes handle custom_questions, respondents, responses, custom_answers
   const { error } = await supabase

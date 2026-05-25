@@ -1,8 +1,13 @@
 'use client'
 
+import { useSearchParams } from 'next/navigation'
+import { Suspense } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
-export default function LoginPage() {
+function LoginInner() {
+  const params = useSearchParams()
+  const error = params.get('error')
+
   const handleGoogleLogin = async () => {
     const supabase = createClient()
     await supabase.auth.signInWithOAuth({
@@ -14,12 +19,29 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-10 w-full max-w-sm text-center">
         <div className="mb-8">
           <h1 className="text-2xl font-bold tracking-tight text-gray-900">Quorum</h1>
           <p className="text-gray-500 mt-1 text-sm">Availability polling, simplified.</p>
         </div>
+
+        {error === 'not_admin' && (
+          <div className="mb-5 rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-left">
+            <p className="text-sm font-semibold text-red-700">Not an authorized account</p>
+            <p className="text-xs text-red-600 mt-1">
+              This Quorum instance is private. Only the configured organizer can sign in.
+              Respondents don&apos;t need an account — open the shared link instead.
+            </p>
+          </div>
+        )}
+
+        {error === 'auth_failed' && (
+          <div className="mb-5 rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-left">
+            <p className="text-sm font-semibold text-red-700">Sign-in failed</p>
+            <p className="text-xs text-red-600 mt-1">Please try again.</p>
+          </div>
+        )}
 
         <button
           onClick={handleGoogleLogin}
@@ -39,5 +61,13 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginInner />
+    </Suspense>
   )
 }
