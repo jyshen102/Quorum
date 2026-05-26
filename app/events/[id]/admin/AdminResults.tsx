@@ -38,6 +38,8 @@ export function AdminResults({ event, questions: _questions, initialRespondents,
     location: event.location ?? '',
     description: event.description ?? '',
     time_slots: event.time_slots ?? [],
+    date_range_start: event.date_range_start,
+    date_range_end: event.date_range_end,
   })
   const [newSlotInput, setNewSlotInput] = useState('')
 
@@ -155,6 +157,8 @@ export function AdminResults({ event, questions: _questions, initialRespondents,
           location: editForm.location.trim() || null,
           description: editForm.description.trim() || null,
           time_slots: editForm.time_slots,
+          date_range_start: editForm.date_range_start,
+          date_range_end: editForm.date_range_end,
         }))
         setEditing(false)
       } catch (e: any) {
@@ -170,6 +174,8 @@ export function AdminResults({ event, questions: _questions, initialRespondents,
       location: currentEvent.location ?? '',
       description: currentEvent.description ?? '',
       time_slots: currentEvent.time_slots ?? [],
+      date_range_start: currentEvent.date_range_start,
+      date_range_end: currentEvent.date_range_end,
     })
     setNewSlotInput('')
     setEditError(null)
@@ -215,6 +221,17 @@ export function AdminResults({ event, questions: _questions, initialRespondents,
 
   const editableSubtypeOptions = SUBTYPES_BY_TYPE[event.type as EventType]
   const slotSuggestions = TIME_SLOTS_BY_TYPE[event.type as EventType]
+
+  // If editing the date range would push existing responses outside the new
+  // window, warn the admin (their data isn't deleted — it just won't show
+  // in the heatmap anymore).
+  const orphanedResponseCount = (() => {
+    if (!editing) return 0
+    const s = editForm.date_range_start
+    const e = editForm.date_range_end
+    if (!s || !e) return 0
+    return responses.filter((r) => r.date_key < s || r.date_key > e).length
+  })()
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -271,7 +288,7 @@ export function AdminResults({ event, questions: _questions, initialRespondents,
             <div className="space-y-4">
               <div className="flex items-center justify-between mb-1">
                 <h2 className="text-sm font-semibold text-gray-800">Edit event</h2>
-                <p className="text-xs text-gray-400">Date range and type can&apos;t be changed</p>
+                <p className="text-xs text-gray-400">Type can&apos;t be changed</p>
               </div>
 
               <div>
@@ -282,6 +299,31 @@ export function AdminResults({ event, questions: _questions, initialRespondents,
                   onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Date range</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="date"
+                    value={editForm.date_range_start}
+                    onChange={(e) => setEditForm((f) => ({ ...f, date_range_start: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+                  />
+                  <input
+                    type="date"
+                    value={editForm.date_range_end}
+                    min={editForm.date_range_start}
+                    onChange={(e) => setEditForm((f) => ({ ...f, date_range_end: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+                  />
+                </div>
+                {orphanedResponseCount > 0 && (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mt-2">
+                    Heads up — <strong>{orphanedResponseCount}</strong>{' '}
+                    {orphanedResponseCount === 1 ? 'existing response falls' : 'existing responses fall'} outside the new range and will hide from the heatmap. The data isn&apos;t deleted, so widening the range later brings it back.
+                  </p>
+                )}
               </div>
 
               <div>

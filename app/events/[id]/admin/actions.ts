@@ -77,6 +77,8 @@ export interface EventEditData {
   location: string
   description: string
   time_slots: string[]
+  date_range_start: string
+  date_range_end: string
 }
 
 export async function updateEvent(eventId: string, data: EventEditData) {
@@ -85,6 +87,8 @@ export async function updateEvent(eventId: string, data: EventEditData) {
   if (!user || !isAdminEmail(user.email)) throw new Error('Not authorized')
 
   if (!data.title.trim()) throw new Error('Title is required')
+  if (!data.date_range_start || !data.date_range_end) throw new Error('Date range is required')
+  if (data.date_range_end < data.date_range_start) throw new Error('End date must be after start date')
 
   const { error } = await supabase
     .from('events')
@@ -95,6 +99,8 @@ export async function updateEvent(eventId: string, data: EventEditData) {
       location: data.location.trim() || null,
       description: data.description.trim() || null,
       time_slots: data.time_slots,
+      date_range_start: data.date_range_start,
+      date_range_end: data.date_range_end,
     } as any)
     .eq('id', eventId)
 
