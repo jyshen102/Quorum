@@ -655,13 +655,14 @@ function HeatmapRow({
       style={{ backgroundColor: bgByTier[tier] }}
     >
       <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 flex-wrap">
           <span className="text-sm font-medium text-gray-800 whitespace-nowrap">{label}</span>
           {badge && (
             <span className={`text-xs font-semibold ${badge.cls} px-2 py-0.5 rounded-full`}>
               {badge.label}
             </span>
           )}
+          {/* Names on larger screens: inline on the same row */}
           {names.length > 0 && (
             <span className="text-xs text-gray-500 truncate hidden sm:block">
               {names.slice(0, 4).join(', ')}{names.length > 4 ? ` +${names.length - 4}` : ''}
@@ -672,6 +673,12 @@ function HeatmapRow({
           {count}/{total}
         </span>
       </div>
+      {/* Names on mobile: own line so they don't get cut off */}
+      {names.length > 0 && (
+        <p className="text-xs text-gray-600 mt-1 sm:hidden">
+          {names.join(', ')}
+        </p>
+      )}
       {bestTime && (
         <p className="text-xs text-gray-600 mt-1">
           <span className="font-medium">Best time:</span> {bestTime}
