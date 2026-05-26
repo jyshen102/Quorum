@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { TypeBadge } from '@/components/TypeBadge'
 import { StatusDot } from '@/components/StatusDot'
-import { formatDateRange } from '@/lib/utils/dates'
+import { formatDateRange, formatDateKey } from '@/lib/utils/dates'
 import type { Event } from '@/lib/types/database'
 
 export const dynamic = 'force-dynamic'
@@ -122,6 +122,12 @@ export default async function DashboardPage() {
                       {formatDateRange(event.date_range_start, event.date_range_end)}
                       {event.location && <> · 📍 {event.location}</>}
                     </p>
+                    {event.status === 'closed' && event.final_date && (
+                      <p className="text-xs text-emerald-700 font-medium mt-1">
+                        ✓ Final: {formatDateKey(event.final_date)}
+                        {event.final_time && <span className="font-normal"> · {event.final_time}</span>}
+                      </p>
+                    )}
                   </div>
                   <div className="text-right flex-shrink-0">
                     <p className="text-xl font-bold text-gray-900">{countMap[event.id] ?? 0}</p>
