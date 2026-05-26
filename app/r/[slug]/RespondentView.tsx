@@ -222,6 +222,34 @@ export function RespondentView({ event, questions }: Props) {
           />
         )}
 
+        {/* Selected-dates summary (calendar view only — TripPicker buttons
+            already make selection visible). Removable chips. */}
+        {!isTrip && sortedSelectedDates.length > 0 && (
+          <div>
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+              Your dates ({sortedSelectedDates.length})
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {sortedSelectedDates.map((dk) => (
+                <span
+                  key={dk}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-600 text-white"
+                >
+                  {formatDateKey(dk)}
+                  <button
+                    type="button"
+                    onClick={() => toggleDate(dk)}
+                    className="text-white/80 hover:text-white"
+                    aria-label={`Remove ${formatDateKey(dk)}`}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Time slot confirmation — only when the organizer defined time slots */}
         {!isTrip && sortedSelectedDates.length > 0 && event.time_slots.length > 0 && (
           <div className="space-y-4">
