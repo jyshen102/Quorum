@@ -222,8 +222,8 @@ export function RespondentView({ event, questions }: Props) {
           />
         )}
 
-        {/* Time slot confirmation for meal/hangout */}
-        {!isTrip && sortedSelectedDates.length > 0 && (
+        {/* Time slot confirmation — only when the organizer defined time slots */}
+        {!isTrip && sortedSelectedDates.length > 0 && event.time_slots.length > 0 && (
           <div className="space-y-4">
             <p className="text-sm font-medium text-gray-700">
               Which times work for each date?
