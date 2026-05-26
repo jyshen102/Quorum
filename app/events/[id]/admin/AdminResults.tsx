@@ -29,6 +29,8 @@ export function AdminResults({ event, questions: _questions, initialRespondents,
   const [currentEvent, setCurrentEvent] = useState(event)
   const [editing, setEditing] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  // Inline "click a date row to set it as final" confirmation
+  const [pendingFinalDate, setPendingFinalDate] = useState<{ key: string; label: string } | null>(null)
   const [editError, setEditError] = useState<string | null>(null)
   const [editForm, setEditForm] = useState({
     title: event.title,
@@ -120,6 +122,16 @@ export function AdminResults({ event, questions: _questions, initialRespondents,
       await closePoll(event.id, closingDate)
       setCurrentEvent((e) => ({ ...e, status: 'closed', final_date: closingDate }))
       setShowCloseForm(false)
+    })
+  }
+
+  const handleConfirmPendingFinalDate = () => {
+    if (!pendingFinalDate) return
+    const dateKey = pendingFinalDate.key
+    startTransition(async () => {
+      await closePoll(event.id, dateKey)
+      setCurrentEvent((e) => ({ ...e, status: 'closed', final_date: dateKey }))
+      setPendingFinalDate(null)
     })
   }
 
@@ -436,7 +448,12 @@ export function AdminResults({ event, questions: _questions, initialRespondents,
         {/* Availability heatmap */}
         {totalRespondents > 0 && (
           <div className="bg-white rounded-2xl border border-gray-100 p-6">
-            <h2 className="text-sm font-semibold text-gray-700 mb-4">Availability</h2>
+            <div className="flex items-center justify-between gap-2 mb-4">
+              <h2 className="text-sm font-semibold text-gray-700">Availability</h2>
+              {currentEvent.status === 'open' && (
+                <span className="text-xs text-gray-400">Tap a date to set it as final</span>
+              )}
+            </div>
             <div className="space-y-2">
               {isTrip
                 ? weekendBlocks.map((block) => {
@@ -455,6 +472,9 @@ export function AdminResults({ event, questions: _questions, initialRespondents,
                         ratio={ratio}
                         tier={tier}
                         names={names}
+                        onClick={currentEvent.status === 'open'
+                          ? () => setPendingFinalDate({ key: block.dates[0], label: block.label })
+                          : undefined}
                       />
                     )
                   })
@@ -478,6 +498,9 @@ export function AdminResults({ event, questions: _questions, initialRespondents,
                         tier={tier}
                         names={names}
                         bestTime={bestTimeText}
+                        onClick={currentEvent.status === 'open'
+                          ? () => setPendingFinalDate({ key: dateKey, label: formatDateKey(dateKey) })
+                          : undefined}
                       />
                     )
                   })}
@@ -607,6 +630,45 @@ export function AdminResults({ event, questions: _questions, initialRespondents,
           )}
         </div>
       </main>
+
+      {/* Pick-a-date confirmation modal */}
+      {pendingFinalDate && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => !isPending && setPendingFinalDate(null)}
+        >
+          <div
+            className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2">
+              Set final date
+            </p>
+            <p className="text-base text-gray-900">
+              Lock in <span className="font-semibold">{pendingFinalDate.label}</span> as the final date and close the poll?
+            </p>
+            <p className="text-xs text-gray-500 mt-2">
+              Respondents who revisit the link will see this date instead of the form. You can reopen the poll later if needed.
+            </p>
+            <div className="flex gap-2 justify-end mt-5">
+              <button
+                onClick={() => setPendingFinalDate(null)}
+                disabled={isPending}
+                className="text-sm text-gray-500 hover:text-gray-900 px-3 py-2 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmPendingFinalDate}
+                disabled={isPending}
+                className="bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-lg hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {isPending ? 'Closing…' : 'Confirm & close'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -626,7 +688,7 @@ function getTier(count: number, bestCount: number): RowTier {
 }
 
 function HeatmapRow({
-  label, count, total, ratio, tier, names, bestTime
+  label, count, total, ratio, tier, names, bestTime, onClick
 }: {
   label: string
   count: number
@@ -635,6 +697,7 @@ function HeatmapRow({
   tier: RowTier
   names: string[]
   bestTime?: string | null
+  onClick?: () => void
 }) {
   // Background color per tier, with ratio-based intensity
   const bgByTier: Record<RowTier, string> = {
@@ -649,11 +712,8 @@ function HeatmapRow({
     tier === 'runnerUp' ? { label: 'Maybe', cls: 'bg-amber-500 text-white' } :
     null
 
-  return (
-    <div
-      className="rounded-xl px-4 py-3 transition-colors"
-      style={{ backgroundColor: bgByTier[tier] }}
-    >
+  const inner = (
+    <>
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0 flex-wrap">
           <span className="text-sm font-medium text-gray-800 whitespace-nowrap">{label}</span>
@@ -684,6 +744,28 @@ function HeatmapRow({
           <span className="font-medium">Best time:</span> {bestTime}
         </p>
       )}
+    </>
+  )
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="block w-full text-left rounded-xl px-4 py-3 transition-all hover:ring-2 hover:ring-gray-900/30 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+        style={{ backgroundColor: bgByTier[tier] }}
+      >
+        {inner}
+      </button>
+    )
+  }
+
+  return (
+    <div
+      className="rounded-xl px-4 py-3 transition-colors"
+      style={{ backgroundColor: bgByTier[tier] }}
+    >
+      {inner}
     </div>
   )
 }
