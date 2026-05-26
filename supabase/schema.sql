@@ -15,6 +15,7 @@ create table if not exists events (
   time_slots text[] not null default '{}',
   status text not null default 'open' check (status in ('open', 'closed')),
   final_date date,
+  final_time text,
   slug text unique not null,
   created_at timestamptz not null default now()
 );

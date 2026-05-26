@@ -370,6 +370,11 @@ function ClosedView({ event }: { event: Event }) {
             <p className="text-sm text-emerald-700">
               <span className="font-semibold">Final date:</span> {formatDateKey(event.final_date)}
             </p>
+            {event.final_time && (
+              <p className="text-sm text-emerald-700 mt-0.5">
+                <span className="font-semibold">Time:</span> {event.final_time}
+              </p>
+            )}
           </div>
         )}
         {!event.final_date && (

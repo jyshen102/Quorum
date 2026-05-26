@@ -119,8 +119,8 @@ export function AdminResults({ event, questions: _questions, initialRespondents,
   const handleClose = () => {
     if (!closingDate) return
     startTransition(async () => {
-      await closePoll(event.id, closingDate)
-      setCurrentEvent((e) => ({ ...e, status: 'closed', final_date: closingDate }))
+      const { finalTime } = await closePoll(event.id, closingDate)
+      setCurrentEvent((e) => ({ ...e, status: 'closed', final_date: closingDate, final_time: finalTime }))
       setShowCloseForm(false)
     })
   }
@@ -129,8 +129,8 @@ export function AdminResults({ event, questions: _questions, initialRespondents,
     if (!pendingFinalDate) return
     const dateKey = pendingFinalDate.key
     startTransition(async () => {
-      await closePoll(event.id, dateKey)
-      setCurrentEvent((e) => ({ ...e, status: 'closed', final_date: dateKey }))
+      const { finalTime } = await closePoll(event.id, dateKey)
+      setCurrentEvent((e) => ({ ...e, status: 'closed', final_date: dateKey, final_time: finalTime }))
       setPendingFinalDate(null)
     })
   }
@@ -138,7 +138,7 @@ export function AdminResults({ event, questions: _questions, initialRespondents,
   const handleReopen = () => {
     startTransition(async () => {
       await reopenPoll(event.id)
-      setCurrentEvent((e) => ({ ...e, status: 'open', final_date: null }))
+      setCurrentEvent((e) => ({ ...e, status: 'open', final_date: null, final_time: null }))
     })
   }
 
@@ -257,10 +257,13 @@ export function AdminResults({ event, questions: _questions, initialRespondents,
 
               {/* Final date banner */}
               {currentEvent.status === 'closed' && currentEvent.final_date && (
-                <div className="mt-4 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 flex items-center gap-2">
-                  <span className="text-emerald-600 text-sm font-medium">
+                <div className="mt-4 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
+                  <p className="text-emerald-700 text-sm font-medium">
                     Final date: {formatDateKey(currentEvent.final_date)}
-                  </span>
+                    {currentEvent.final_time && (
+                      <span className="text-emerald-600 font-normal"> · {currentEvent.final_time}</span>
+                    )}
+                  </p>
                 </div>
               )}
             </>

@@ -14,6 +14,7 @@ export interface Event {
   time_slots: string[]
   status: EventStatus
   final_date: string | null
+  final_time: string | null
   slug: string
   created_at: string
 }
