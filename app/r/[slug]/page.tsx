@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { RespondentView } from './RespondentView'
-import type { Event, CustomQuestion } from '@/lib/types/database'
+import type { Event, CustomQuestion, Respondent, Response } from '@/lib/types/database'
 
 interface Props {
   params: { slug: string }
@@ -21,11 +21,39 @@ export default async function RespondentPage({ params }: Props) {
   if (!eventRaw) notFound()
   const event = eventRaw as Event
 
-  const { data: questionsRaw } = await supabase
-    .from('custom_questions')
-    .select('*')
-    .eq('event_id', event.id)
-    .order('display_order')
+  // Fetch questions + respondents + responses in parallel
+  const [questionsRes, respondentsRes] = await Promise.all([
+    supabase
+      .from('custom_questions')
+      .select('*')
+      .eq('event_id', event.id)
+      .order('display_order'),
+    supabase
+      .from('respondents')
+      .select('*')
+      .eq('event_id', event.id)
+      .order('submitted_at'),
+  ])
 
-  return <RespondentView event={event} questions={(questionsRaw ?? []) as CustomQuestion[]} />
+  const questions = (questionsRes.data ?? []) as CustomQuestion[]
+  const respondents = (respondentsRes.data ?? []) as Respondent[]
+
+  // Then fetch responses for those respondents
+  let responses: Response[] = []
+  if (respondents.length > 0) {
+    const { data: responsesRaw } = await supabase
+      .from('responses')
+      .select('*')
+      .in('respondent_id', respondents.map((r) => r.id))
+    responses = (responsesRaw ?? []) as Response[]
+  }
+
+  return (
+    <RespondentView
+      event={event}
+      questions={questions}
+      initialRespondents={respondents}
+      initialResponses={responses}
+    />
+  )
 }

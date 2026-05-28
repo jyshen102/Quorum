@@ -1,20 +1,29 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useEffect, useTransition } from 'react'
 import { TypeBadge } from '@/components/TypeBadge'
-import { getWeekendBlocks, formatDateKey, formatDateRange } from '@/lib/utils/dates'
-import type { Event, CustomQuestion } from '@/lib/types/database'
+import { HeatmapRow, getTier } from '@/components/HeatmapRow'
+import { createClient } from '@/lib/supabase/client'
+import { getDatesInRange, getWeekendBlocks, formatDateKey, formatDateRange } from '@/lib/utils/dates'
+import { findBestTimeWindow, formatInterval } from '@/lib/utils/timeParse'
+import type { Event, CustomQuestion, Respondent, Response } from '@/lib/types/database'
 import { submitResponse } from './actions'
 
 interface Props {
   event: Event
   questions: CustomQuestion[]
+  initialRespondents: Respondent[]
+  initialResponses: Response[]
 }
 
-type Step = 'name' | 'availability' | 'done'
+type Step = 'name' | 'availability' | 'done' | 'results'
 
-export function RespondentView({ event, questions }: Props) {
+const respondedKey = (eventId: string) => `quorum:responded:${eventId}`
+
+export function RespondentView({ event, questions, initialRespondents, initialResponses }: Props) {
   const [step, setStep] = useState<Step>('name')
+  const [respondents, setRespondents] = useState<Respondent[]>(initialRespondents)
+  const [responses, setResponses] = useState<Response[]>(initialResponses)
   const [name, setName] = useState('')
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set())
   const [dateSelections, setDateSelections] = useState<Record<string, string[]>>({})
@@ -43,6 +52,30 @@ export function RespondentView({ event, questions }: Props) {
   })
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
+
+  // If this device already submitted for this event, jump straight to results.
+  useEffect(() => {
+    if (event.status === 'closed') return
+    if (typeof window === 'undefined') return
+    const respondentId = window.localStorage.getItem(respondedKey(event.id))
+    if (respondentId) setStep('results')
+  }, [event.id, event.status])
+
+  // Live-update the results view as new responses come in
+  useEffect(() => {
+    if (step !== 'results' && step !== 'done') return
+    const supabase = createClient()
+    const channel = supabase
+      .channel(`r-event-${event.id}`)
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'respondents', filter: `event_id=eq.${event.id}` },
+        (payload) => setRespondents((prev) => [...prev, payload.new as Respondent]))
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'responses' },
+        (payload) => setResponses((prev) => [...prev, payload.new as Response]))
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [step, event.id])
 
   const isTrip = event.type === 'trip'
   const weekendBlocks = isTrip ? getWeekendBlocks(event.date_range_start, event.date_range_end) : []
@@ -135,12 +168,16 @@ export function RespondentView({ event, questions }: Props) {
           answerText: customAnswers[q.id] ?? '',
         }))
 
-        await submitResponse({
+        const result = await submitResponse({
           eventId: event.id,
           name,
           dateSelections: dateSelectionsArr,
           customAnswers: customAnswersArr,
         })
+        // Remember this device responded so revisits jump straight to results
+        if (typeof window !== 'undefined' && result.respondentId) {
+          window.localStorage.setItem(respondedKey(event.id), result.respondentId)
+        }
         setStep('done')
       } catch (e: any) {
         setError(e.message)
@@ -148,17 +185,16 @@ export function RespondentView({ event, questions }: Props) {
     })
   }
 
-  // Done confirmation
-  if (step === 'done') {
+  // Done confirmation + results
+  if (step === 'done' || step === 'results') {
     return (
       <Shell event={event}>
-        <div className="text-center py-10">
-          <div className="w-14 h-14 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <span className="text-2xl">✓</span>
-          </div>
-          <h2 className="text-xl font-bold text-gray-900">You&apos;re in!</h2>
-          <p className="text-gray-500 text-sm mt-2">Your availability has been recorded.</p>
-        </div>
+        <ResultsBlock
+          event={event}
+          respondents={respondents}
+          responses={responses}
+          headerVariant={step === 'done' ? 'just-submitted' : 'revisit'}
+        />
       </Shell>
     )
   }
@@ -650,6 +686,144 @@ function TimePicker({
           + Add
         </button>
       </div>
+    </div>
+  )
+}
+
+// Compact, read-only results view rendered to respondents after they submit
+// or when they revisit the link from the same device.
+function ResultsBlock({
+  event,
+  respondents,
+  responses,
+  headerVariant,
+}: {
+  event: Event
+  respondents: Respondent[]
+  responses: Response[]
+  headerVariant: 'just-submitted' | 'revisit'
+}) {
+  const isTrip = event.type === 'trip'
+  const dateKeys = isTrip ? [] : getDatesInRange(event.date_range_start, event.date_range_end)
+  const weekendBlocks = isTrip ? getWeekendBlocks(event.date_range_start, event.date_range_end) : []
+
+  const totalRespondents = respondents.length
+
+  // dateKey → set of respondent ids
+  const availabilityMap: Record<string, Set<string>> = {}
+  // dateKey → array of (each respondent's time picks)
+  const timeSlotsByDate: Record<string, string[][]> = {}
+  responses.forEach((r) => {
+    if (!availabilityMap[r.date_key]) availabilityMap[r.date_key] = new Set()
+    availabilityMap[r.date_key].add(r.respondent_id)
+    if (!timeSlotsByDate[r.date_key]) timeSlotsByDate[r.date_key] = []
+    timeSlotsByDate[r.date_key].push(r.time_slots ?? [])
+  })
+
+  const respondentMap: Record<string, string> = {}
+  respondents.forEach((r) => { respondentMap[r.id] = r.name })
+
+  // Best overall count (across all dates / weekend blocks)
+  let bestCount = 0
+  if (isTrip) {
+    weekendBlocks.forEach((block) => {
+      const ids = new Set<string>()
+      block.dates.forEach((d) => availabilityMap[d]?.forEach((id) => ids.add(id)))
+      if (ids.size > bestCount) bestCount = ids.size
+    })
+  } else {
+    dateKeys.forEach((d) => {
+      const c = availabilityMap[d]?.size ?? 0
+      if (c > bestCount) bestCount = c
+    })
+  }
+
+  const resetAndRefresh = () => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(respondedKey(event.id))
+      window.location.reload()
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="text-center">
+        <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-3">
+          <span className="text-xl">✓</span>
+        </div>
+        <h2 className="text-lg font-bold text-gray-900">
+          {headerVariant === 'just-submitted' ? "You're in!" : "You've already responded"}
+        </h2>
+        <p className="text-gray-500 text-sm mt-1">
+          {totalRespondents === 1
+            ? "You're the first to vote. Share the link to gather more responses."
+            : `${totalRespondents} ${totalRespondents === 1 ? 'person has' : 'people have'} responded so far.`}
+        </p>
+      </div>
+
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+          Group availability
+        </p>
+        <div className="space-y-2">
+          {isTrip
+            ? weekendBlocks.map((block) => {
+                const ids = new Set<string>()
+                block.dates.forEach((d) => availabilityMap[d]?.forEach((id) => ids.add(id)))
+                const count = ids.size
+                const ratio = totalRespondents > 0 ? count / totalRespondents : 0
+                const tier = getTier(count, bestCount)
+                const names = Array.from(ids).map((id) => respondentMap[id]).filter(Boolean)
+                return (
+                  <HeatmapRow
+                    key={block.key}
+                    label={block.label}
+                    count={count}
+                    total={totalRespondents}
+                    ratio={ratio}
+                    tier={tier}
+                    names={names}
+                  />
+                )
+              })
+            : dateKeys.map((dateKey) => {
+                const ids = availabilityMap[dateKey] ?? new Set()
+                const count = ids.size
+                const ratio = totalRespondents > 0 ? count / totalRespondents : 0
+                const tier = getTier(count, bestCount)
+                const names = Array.from(ids).map((id) => respondentMap[id]).filter(Boolean)
+                const peak = count > 0 ? findBestTimeWindow(timeSlotsByDate[dateKey] ?? []) : null
+                const bestTimeText = peak
+                  ? `${formatInterval(peak.startMin, peak.endMin)} (${peak.count}/${count})`
+                  : null
+                return (
+                  <HeatmapRow
+                    key={dateKey}
+                    label={formatDateKey(dateKey)}
+                    count={count}
+                    total={totalRespondents}
+                    ratio={ratio}
+                    tier={tier}
+                    names={names}
+                    bestTime={bestTimeText}
+                  />
+                )
+              })}
+        </div>
+        <p className="text-xs text-gray-400 mt-3">
+          <span className="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1 align-middle" /> Best —{' '}
+          <span className="inline-block w-2 h-2 rounded-full bg-amber-500 mr-1 align-middle" /> Maybe —{' '}
+          <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1 align-middle" /> Voted —{' '}
+          updates live as people respond.
+        </p>
+      </div>
+
+      <button
+        onClick={resetAndRefresh}
+        className="text-xs text-gray-400 hover:text-gray-700 transition-colors block mx-auto"
+      >
+        Update my response
+      </button>
     </div>
   )
 }

@@ -53,5 +53,5 @@ export async function submitResponse(data: SubmitResponseData) {
     }
   }
 
-  return { success: true }
+  return { success: true, respondentId: respondent.id }
 }
