@@ -7,7 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 import { getDatesInRange, getWeekendBlocks, formatDateKey, formatDateRange } from '@/lib/utils/dates'
 import { findBestTimeWindow, formatInterval } from '@/lib/utils/timeParse'
 import type { Event, CustomQuestion, Respondent, Response } from '@/lib/types/database'
-import { submitResponse } from './actions'
+import { submitResponse, updateResponse, getMyResponse } from './actions'
 
 interface Props {
   event: Event
@@ -52,6 +52,12 @@ export function RespondentView({ event, questions, initialRespondents, initialRe
   })
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  // When set, the form is editing this existing respondent's submission
+  // (rather than creating a fresh one). null = new submission.
+  const [editingRespondentId, setEditingRespondentId] = useState<string | null>(null)
+  // Which per-date time pickers are currently expanded (collapsed = just show
+  // an "Add my own time" trigger; expanded = show the mode + time controls)
+  const [expandedPicker, setExpandedPicker] = useState<Record<string, boolean>>({})
 
   // If this device already submitted for this event, jump straight to results.
   useEffect(() => {
@@ -168,17 +174,71 @@ export function RespondentView({ event, questions, initialRespondents, initialRe
           answerText: customAnswers[q.id] ?? '',
         }))
 
-        const result = await submitResponse({
+        const payload = {
           eventId: event.id,
           name,
           dateSelections: dateSelectionsArr,
           customAnswers: customAnswersArr,
-        })
+        }
+        const result = editingRespondentId
+          ? await updateResponse(editingRespondentId, payload)
+          : await submitResponse(payload)
         // Remember this device responded so revisits jump straight to results
         if (typeof window !== 'undefined' && result.respondentId) {
           window.localStorage.setItem(respondedKey(event.id), result.respondentId)
         }
+        setEditingRespondentId(null)
         setStep('done')
+      } catch (e: any) {
+        setError(e.message)
+      }
+    })
+  }
+
+  // Load this respondent's prior submission into the form and switch to
+  // edit mode. Called from the ResultsBlock "Edit my response" button.
+  const startEditing = (respondentId: string) => {
+    setError(null)
+    startTransition(async () => {
+      try {
+        const data = await getMyResponse(respondentId)
+        if (!data.found || data.eventId !== event.id) {
+          // Respondent doesn't exist (probably deleted). Clear the stash and
+          // fall back to a fresh form.
+          if (typeof window !== 'undefined') {
+            window.localStorage.removeItem(respondedKey(event.id))
+          }
+          setEditingRespondentId(null)
+          setStep('name')
+          return
+        }
+
+        // Pre-fill form state from the existing submission
+        setName(data.name ?? '')
+
+        const sels: Record<string, string[]> = {}
+        const dateSet = new Set<string>()
+        const blockSet = new Set<string>()
+        ;(data.dateSelections ?? []).forEach((ds) => {
+          dateSet.add(ds.dateKey)
+          sels[ds.dateKey] = ds.timeSlots
+        })
+        setSelectedDates(dateSet)
+        setDateSelections(sels)
+        // For trip events, derive selected blocks from selected dates
+        if (isTrip) {
+          weekendBlocks.forEach((b) => {
+            if (b.dates.some((d) => dateSet.has(d))) blockSet.add(b.key)
+          })
+          setSelectedBlocks(blockSet)
+        }
+
+        const answers: Record<string, string> = {}
+        ;(data.customAnswers ?? []).forEach((a) => { answers[a.questionId] = a.answerText })
+        setCustomAnswers(answers)
+
+        setEditingRespondentId(respondentId)
+        setStep('availability') // skip the name step; name is loaded already
       } catch (e: any) {
         setError(e.message)
       }
@@ -194,6 +254,8 @@ export function RespondentView({ event, questions, initialRespondents, initialRe
           respondents={respondents}
           responses={responses}
           headerVariant={step === 'done' ? 'just-submitted' : 'revisit'}
+          onEdit={startEditing}
+          editDisabled={isPending}
         />
       </Shell>
     )
@@ -236,8 +298,18 @@ export function RespondentView({ event, questions, initialRespondents, initialRe
   return (
     <Shell event={event}>
       <div className="space-y-6">
+        {editingRespondentId && (
+          <div className="rounded-xl bg-amber-50 border border-amber-100 px-4 py-3">
+            <p className="text-sm font-medium text-amber-800">Editing your response</p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              Your previous picks are pre-filled below. Save when you&apos;re happy with the changes.
+            </p>
+          </div>
+        )}
         <div>
-          <h2 className="text-base font-semibold text-gray-900">When can you make it?</h2>
+          <h2 className="text-base font-semibold text-gray-900">
+            {editingRespondentId ? 'Update your availability' : 'When can you make it?'}
+          </h2>
           <p className="text-sm text-gray-500 mt-0.5">Select all dates that work for you.</p>
         </div>
 
@@ -345,12 +417,23 @@ export function RespondentView({ event, questions, initialRespondents, initialRe
                     </div>
                   )}
 
-                  {/* Custom time picker */}
-                  <TimePicker
-                    state={getPicker(dk)}
-                    onChange={(patch) => setPicker(dk, patch)}
-                    onAdd={() => addCustomTime(dk)}
-                  />
+                  {/* Custom time — collapsed trigger, expands to a picker */}
+                  {expandedPicker[dk] ? (
+                    <TimePicker
+                      state={getPicker(dk)}
+                      onChange={(patch) => setPicker(dk, patch)}
+                      onAdd={() => addCustomTime(dk)}
+                      onClose={() => setExpandedPicker((p) => ({ ...p, [dk]: false }))}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setExpandedPicker((p) => ({ ...p, [dk]: true }))}
+                      className="text-xs font-medium text-gray-600 border border-dashed border-gray-300 rounded-full px-3 py-1.5 hover:border-gray-500 hover:text-gray-900 transition-colors mt-1"
+                    >
+                      + Add my own time
+                    </button>
+                  )}
                 </div>
               )
             })}
@@ -388,7 +471,9 @@ export function RespondentView({ event, questions, initialRespondents, initialRe
             disabled={!hasSelection || isPending}
             className="flex-1 bg-gray-900 text-white font-medium py-3 rounded-xl hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            {isPending ? 'Submitting…' : 'Submit'}
+            {isPending
+              ? (editingRespondentId ? 'Saving…' : 'Submitting…')
+              : (editingRespondentId ? 'Save changes' : 'Submit')}
           </button>
         </div>
       </div>
@@ -584,43 +669,33 @@ function TimePicker({
   state,
   onChange,
   onAdd,
+  onClose,
 }: {
   state: PickerStateOuter
   onChange: (patch: Partial<PickerStateOuter>) => void
   onAdd: () => void
+  onClose?: () => void
 }) {
   const hours = Array.from({ length: 12 }, (_, i) => i + 1) // 1..12
   const minutes = [0, 15, 30, 45]
   const selectClass =
     'border border-gray-200 bg-white rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent'
-  const modes: { value: PickerMode; label: string }[] = [
-    { value: 'after', label: 'After' },
-    { value: 'between', label: 'Between' },
-  ]
 
   return (
-    <div className="space-y-2 mt-1">
-      {/* Mode selector — small segmented control */}
-      <div className="inline-flex rounded-full border border-gray-200 bg-white p-0.5 text-xs">
-        {modes.map((m) => {
-          const sel = state.mode === m.value
-          return (
-            <button
-              key={m.value}
-              type="button"
-              onClick={() => onChange({ mode: m.value })}
-              className={`px-2.5 py-1 rounded-full font-medium transition-colors ${
-                sel ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-800'
-              }`}
-            >
-              {m.label}
-            </button>
-          )
-        })}
-      </div>
-
-      {/* Start time + (end time when between) + add */}
+    <div className="mt-1 rounded-xl border border-gray-200 bg-white p-2.5">
       <div className="flex flex-wrap items-center gap-2">
+        {/* Mode dropdown */}
+        <select
+          value={state.mode}
+          onChange={(e) => onChange({ mode: e.target.value as PickerMode })}
+          className={selectClass}
+          aria-label="Time mode"
+        >
+          <option value="after">After</option>
+          <option value="between">Between</option>
+        </select>
+
+        {/* Start time */}
         <select
           value={state.hour}
           onChange={(e) => onChange({ hour: parseInt(e.target.value, 10) })}
@@ -681,10 +756,21 @@ function TimePicker({
         <button
           type="button"
           onClick={onAdd}
-          className="text-xs font-medium text-gray-600 border border-gray-200 rounded-full px-3 py-1.5 hover:border-gray-400 hover:text-gray-900 transition-colors"
+          className="text-xs font-semibold bg-gray-900 text-white rounded-full px-3 py-1.5 hover:bg-gray-800 transition-colors"
         >
-          + Add
+          Add
         </button>
+
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-xs text-gray-400 hover:text-gray-700 px-2 py-1.5 transition-colors ml-auto"
+            aria-label="Close time picker"
+          >
+            ×
+          </button>
+        )}
       </div>
     </div>
   )
@@ -697,11 +783,15 @@ function ResultsBlock({
   respondents,
   responses,
   headerVariant,
+  onEdit,
+  editDisabled,
 }: {
   event: Event
   respondents: Respondent[]
   responses: Response[]
   headerVariant: 'just-submitted' | 'revisit'
+  onEdit: (respondentId: string) => void
+  editDisabled: boolean
 }) {
   const isTrip = event.type === 'trip'
   const dateKeys = isTrip ? [] : getDatesInRange(event.date_range_start, event.date_range_end)
@@ -738,10 +828,36 @@ function ResultsBlock({
     })
   }
 
-  const resetAndRefresh = () => {
+  // Resolve the local respondent_id from localStorage (set on submit).
+  // We resolve it lazily in the click handler so SSR stays clean.
+  const handleEditClick = () => {
+    if (typeof window === 'undefined') return
+    const respondentId = window.localStorage.getItem(respondedKey(event.id))
+    if (!respondentId) {
+      // Edge case: localStorage was cleared between revisit and click.
+      window.location.reload()
+      return
+    }
+    onEdit(respondentId)
+  }
+
+  // Fully clear this device's link to the existing response and start over.
+  const startFreshResponse = () => {
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem(respondedKey(event.id))
       window.location.reload()
+    }
+  }
+
+  // Pull the current respondent's name (if we have an id stashed) so the UI
+  // can confirm whose response would be edited — avoids confusion on shared
+  // devices.
+  let myName: string | null = null
+  if (typeof window !== 'undefined') {
+    const respondentId = window.localStorage.getItem(respondedKey(event.id))
+    if (respondentId) {
+      const me = respondents.find((r) => r.id === respondentId)
+      if (me) myName = me.name
     }
   }
 
@@ -818,12 +934,28 @@ function ResultsBlock({
         </p>
       </div>
 
-      <button
-        onClick={resetAndRefresh}
-        className="text-xs text-gray-400 hover:text-gray-700 transition-colors block mx-auto"
-      >
-        Update my response
-      </button>
+      <div className="flex flex-col items-center gap-2 pt-1">
+        {myName && (
+          <p className="text-xs text-gray-400">Submitted as <span className="font-medium text-gray-600">{myName}</span></p>
+        )}
+        <div className="flex gap-3">
+          <button
+            onClick={handleEditClick}
+            disabled={editDisabled}
+            className="text-xs font-medium text-gray-700 border border-gray-200 rounded-full px-4 py-1.5 hover:border-gray-400 hover:text-gray-900 disabled:opacity-40 transition-colors"
+          >
+            {editDisabled ? 'Loading…' : 'Edit my response'}
+          </button>
+          {myName && (
+            <button
+              onClick={startFreshResponse}
+              className="text-xs text-gray-400 hover:text-gray-700 transition-colors"
+            >
+              Not you? Start over
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
